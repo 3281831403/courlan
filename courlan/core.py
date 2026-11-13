@@ -42,6 +42,11 @@ FIND_LINKS_REGEX = re.compile(r"<a\s+[^<>]+?>", re.I)
 HREFLANG_REGEX = re.compile(r'hreflang=["\']?([a-z-]+)', re.I)
 # *? so empty href="" / href='' do not capture the closing quote as the URL
 LINK_REGEX = re.compile(r'href=["\']?([^ ]*?)(["\' >])', re.I)
+# per the HTML spec, the first <base> element carrying an href sets the
+# document base URL used to resolve every relative link
+BASE_REGEX = re.compile(
+    r"<base\b[^<>]*?\bhref\s*=\s*(['\"]?)(?P<url>[^'\"\s>]+)\1", re.I
+)
 
 
 @lru_cache(maxsize=4096)
@@ -187,6 +192,26 @@ def _check_url(
     return url, domain
 
 
+def _find_document_base(pagecontent: str, url: str | None) -> str | None:
+    """Resolve the document base URL as browsers do: the first <base>
+    element with an href attribute wins, and a relative base is resolved
+    against the page URL. Return None without a usable base."""
+    basematch = BASE_REGEX.search(pagecontent)
+    if not basematch:
+        return url
+    base = basematch.group("url").strip()
+    if not base:
+        return url
+    if not url:
+        # a relative base cannot be resolved without a page URL
+        return base if base.startswith("http") else None
+    try:
+        return fix_relative_urls(url, base)
+    except ValueError:
+        LOGGER.debug("unresolvable base URL: %s", base)
+        return url
+
+
 def extract_links(
     pagecontent: str,
     url: str | None = None,
@@ -236,6 +261,10 @@ def extract_links(
     if not pagecontent:
         return validlinks
 
+    # the <base> element redefines the URL used to resolve relative links;
+    # the page URL stays the reference for internal/external classification
+    document_base = _find_document_base(pagecontent, url or None)
+
     # define host reference
     reference = reference or base_url
     ref_label = _compared_host(get_tldinfo(reference)[0]) if reference else None
@@ -262,10 +291,10 @@ def extract_links(
 
     # filter candidates
     for link in candidates:
-        # repair using base
-        if not link.startswith("http"):
+        # repair using the document base (page URL plus possible <base>)
+        if not link.startswith("http") and document_base is not None:
             try:
-                link = fix_relative_urls(url, link)
+                link = fix_relative_urls(document_base, link)
             except ValueError:
                 LOGGER.debug("unresolvable link: %s", link)
                 continue

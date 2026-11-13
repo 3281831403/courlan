@@ -587,6 +587,144 @@ def test_extraction_navigation():
     ]
 
 
+def test_extraction_base_tag():
+    """relative links are resolved against the document <base> URL."""
+    # absolute base takes precedence over the page URL
+    pagecontent = (
+        '<html><head><base href="https://base.example/sub/"></head>'
+        '<body><a href="page">x</a><a href="/root">y</a></body></html>'
+    )
+    assert extract_links(
+        pagecontent, "https://page.example/dir/index.html", no_filter=True
+    ) == {"https://base.example/sub/page", "https://base.example/root"}
+    # relative base is resolved against the page URL first
+    pagecontent = (
+        '<html><head><base href="files/"></head>'
+        '<body><a href="page">x</a></body></html>'
+    )
+    assert extract_links(
+        pagecontent, "https://page.example/dir/index.html", no_filter=True
+    ) == {"https://page.example/dir/files/page"}
+    # only the first base element carrying an href is used
+    pagecontent = (
+        '<html><head><base href="https://first.example/a/">'
+        '<base href="https://second.example/b/"></head>'
+        '<body><a href="p">x</a></body></html>'
+    )
+    assert extract_links(pagecontent, "https://page.example/dir/", no_filter=True) == {
+        "https://first.example/a/p"
+    }
+    # a base without href is ignored, the next base with href applies
+    pagecontent = (
+        '<html><head><base target="_blank">'
+        '<base href="https://b.example/x/"></head>'
+        '<body><a href="p">x</a></body></html>'
+    )
+    assert extract_links(pagecontent, "https://p.example/", no_filter=True) == {
+        "https://b.example/x/p"
+    }
+    # without a base element the page URL is used as before
+    pagecontent = '<html><body><a href="page">x</a></body></html>'
+    assert extract_links(
+        pagecontent, "https://p.example/dir/i.html", no_filter=True
+    ) == {"https://p.example/dir/page"}
+    # the page URL stays the internal/external reference even with a base
+    pagecontent = (
+        '<html><head><base href="https://base.example/"></head>'
+        '<body><a href="https://page.example/internal">x</a>'
+        '<a href="https://other.org/external">y</a></body></html>'
+    )
+    assert extract_links(pagecontent, "https://page.example/", external_bool=False) == {
+        "https://page.example/internal"
+    }
+    assert extract_links(pagecontent, "https://page.example/", external_bool=True) == {
+        "https://other.org/external"
+    }
+    # a relative base without a page URL cannot be resolved; relative links
+    # are left untouched while absolute ones still go through
+    pagecontent = (
+        '<html><head><base href="files/"></head>'
+        '<body><a href="https://ok.org/z">z</a><a href="rel">r</a></body></html>'
+    )
+    assert extract_links(pagecontent, no_filter=True) == {"https://ok.org/z", "rel"}
+
+
+def test_extraction_dot_segments():
+    """equivalent absolute and relative spellings collapse to one link."""
+    pagecontent = (
+        "<html><body>"
+        '<a href="https://example.org/a/./b">1</a>'
+        '<a href="https://example.org/a/c/../b">2</a>'
+        '<a href="https://example.org/a/b">3</a>'
+        "</body></html>"
+    )
+    assert extract_links(pagecontent, "https://example.org/") == {
+        "https://example.org/a/b"
+    }
+    # same dedup through the UrlStore-style normalization path
+    pagecontent = (
+        "<html><body>"
+        '<a href="https://example.org/./page">1</a>'
+        '<a href="/page">2</a>'
+        '<a href="https://example.org/page/">3</a>'
+        "</body></html>"
+    )
+    assert extract_links(pagecontent, "https://example.org/") == {
+        "https://example.org/page"
+    }
+    # a popping /.. keeps the directory slash like browsers do
+    pagecontent = (
+        "<html><body>"
+        '<a href="https://example.org/dir/sub/..">1</a>'
+        '<a href="https://example.org/dir/">2</a>'
+        "</body></html>"
+    )
+    assert extract_links(pagecontent, "https://example.org/") == {
+        "https://example.org/dir/"
+    }
+    # dot segments in relative links are resolved after the <base> URL
+    pagecontent = (
+        '<html><head><base href="https://example.org/site/"></head><body>'
+        '<a href="./news/1">1</a>'
+        '<a href="news/1">2</a>'
+        '<a href="https://example.org/site/./news/../news/1">3</a>'
+        "</body></html>"
+    )
+    assert extract_links(
+        pagecontent, "https://example.org/crawl/page.html", strict=False
+    ) == {"https://example.org/site/news/1"}
+    # filtering semantics are unaffected: with_nav still drops nav pages
+    pagecontent = (
+        "<html><body>"
+        '<a href="https://example.org/./page/2">1</a>'
+        '<a href="https://example.org/page/2">2</a>'
+        '<a href="https://example.org/article">3</a>'
+        "</body></html>"
+    )
+    assert extract_links(pagecontent, "https://example.org/", with_nav=False) == {
+        "https://example.org/article"
+    }
+    assert extract_links(pagecontent, "https://example.org/", with_nav=True) == {
+        "https://example.org/article",
+        "https://example.org/page/2",
+    }
+    # strict filtering still applies after dot-segment resolution
+    pagecontent = (
+        "<html><body>"
+        '<a href="https://example.org/a/../article?utm_source=x">1</a>'
+        '<a href="https://example.org/./article?zap=2">2</a>'
+        '<a href="https://example.org/article">3</a>'
+        "</body></html>"
+    )
+    assert extract_links(pagecontent, "https://example.org/", strict=True) == {
+        "https://example.org/article"
+    }
+    assert extract_links(pagecontent, "https://example.org/", strict=False) == {
+        "https://example.org/article",
+        "https://example.org/article?zap=2",
+    }
+
+
 def test_filter_links():
     base_url = "https://example.org"
     htmlstring = '<html><body><a href="https://example.org/page1"/><a href="https://example.org/page1/"/><a href="https://test.org/page1"/></body></html>'

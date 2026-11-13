@@ -599,8 +599,24 @@ def test_normalization():
         normalize_url("https://example.org/../path/page.html")
         == "https://example.org/path/page.html"
     )
+    # dot segments are resolved throughout the path (RFC 3986 5.2.4)
     assert normalize_path("/../../a//b") == "/a/b"
-    assert normalize_path("/a/../b") == "/a/../b"  # only leading ones
+    assert normalize_path("/a/../b") == "/b"
+    assert normalize_path("/a/./b") == "/a/b"
+    # a popping /.. leaves the directory slash, like urllib and browsers
+    assert normalize_path("/a/b/..") == "/a/"
+    assert normalize_path("/a/b/../") == "/a/"
+    assert normalize_path("/a/.") == "/a/"
+    assert normalize_path("/a/./") == "/a/"
+    assert normalize_path("/a/..") == "/"
+    assert normalize_url("https://example.org/a/./b/../c") == "https://example.org/a/c"
+    assert (
+        normalize_url("https://example.org/a/c/../b")
+        == normalize_url("https://example.org/a/./b")
+        == "https://example.org/a/b"
+    )
+    # percent-encoded dots are data, not dot segments
+    assert normalize_path("/a/%2E%2E/b") == "/a/%2E%2E/b"
 
     # the (url, base, path) split needs a host: without one urlunsplit drops the
     # "//" and slicing past the base would cut into the path

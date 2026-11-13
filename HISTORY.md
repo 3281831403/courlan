@@ -1,6 +1,12 @@
 # History / Changelog
 
 
+## Unreleased
+
+- `extract_links()`: resolve relative links against the document `<base>` URL, including relative bases and only the first `<base>` element carrying an `href`
+- cleaning: resolve `.` and `..` segments throughout the path (RFC 3986) so equivalent absolute and relative spellings share one canonical form
+
+
 ## 1.4.0
 
 - More robust `FIND_LINKS_REGEX` expression by @danishashko (#130)

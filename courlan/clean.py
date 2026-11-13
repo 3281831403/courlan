@@ -24,7 +24,6 @@ DEFAULT_PORTS = {"http": 80, "https": 443}
 
 # path
 PATH1 = re.compile(r"/+")
-PATH2 = re.compile(r"^(?:/\.\.(?![^/]))+")
 
 # scrub
 CONTROL_CHARS = "".join(map(chr, range(0x20)))
@@ -179,11 +178,33 @@ def normalize_netloc_parts(parsed_url: SplitResult) -> tuple[str, str, str]:
     return scheme, netloc, hostport
 
 
+def _remove_dot_segments(path: str) -> str:
+    """RFC 3986 section 5.2.4: resolve "." and ".." segments so equivalent
+    paths share one form. A popping "/.." leaves the directory slash (so
+    "/a/c/.." and "/a/" converge, matching urllib and browsers), while
+    segments above the root are dropped rather than escaping it. Repeated
+    slashes are expected to be collapsed beforehand by the caller."""
+    absolute = path.startswith("/")
+    trailing_slash = path.endswith(("/", "/.", "/.."))
+    stack: list[str] = []
+    for segment in path.split("/"):
+        if segment == "..":
+            if stack:
+                stack.pop()
+        elif segment not in (".", ""):
+            stack.append(segment)
+    result = "/".join(stack)
+    if absolute:
+        result = "/" + result
+    if trailing_slash and not result.endswith("/"):
+        result += "/"
+    return result
+
+
 def normalize_path(path: str) -> str:
-    "Collapse repeated slashes, drop leading /../ segments, then percent-normalize."
+    "Collapse repeated slashes, resolve dot segments, then percent-normalize."
     # https://github.com/saintamh/alcazar/blob/master/alcazar/utils/urls.py
-    # leading /../'s in the path are removed
-    return normalize_part(PATH2.sub("", PATH1.sub("/", path)))
+    return normalize_part(_remove_dot_segments(PATH1.sub("/", path)))
 
 
 def rebuild_url(
